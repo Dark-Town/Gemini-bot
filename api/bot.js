@@ -1,43 +1,53 @@
-import TelegramBot from 'node-telegram-bot-api';
 import fetch from 'node-fetch';
 
-const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { polling: true });
+export default async function handler(req, res) {
+  if (req.method !== 'POST') {
+    return res.status(405).send({ message: 'Only POST requests allowed' });
+  }
 
-// Handle incoming messages
-bot.on('message', async (msg) => {
-  const chatId = msg.chat.id;
-  const text = msg.text?.trim();
+  const body = req.body;
 
-  if (!text) return bot.sendMessage(chatId, "Please send a valid text prompt.");
+  // Extract Telegram chat ID and message text
+  const chatId = body.message?.chat.id;
+  const text = body.message?.text?.trim();
 
-  // Special trigger (brand response)
-  if (["who created you", "who made you", "your creator"].some(t => text.toLowerCase().includes(t))) {
-    return bot.sendMessage(
-      chatId,
-      `🤖 I was built by *TCRONEB HACKX*.\nJoin his AI + Bots dev channel: [@paidtechzone](https://t.me/paidtechzone).`,
-      { parse_mode: "Markdown" }
-    );
+  if (!chatId || !text) {
+    return res.status(200).send("No valid message");
+  }
+
+  // Special reply when asked about creator
+  if (["who created you", "your creator", "who made you"].some(q => text.toLowerCase().includes(q))) {
+    return await sendMessage(chatId, `🤖 I was created by *TCRONEB HACKX*.\nJoin: [@paidtechzone](https://t.me/paidtechzone)`, "Markdown");
   }
 
   try {
-    // Use your Vercel Gemini API endpoint
-    const response = await fetch('https://ai-mu-beryl.vercel.app/api/tcroneb-ai', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt: text })
+    const response = await fetch("https://gemini-bot-paidtech.vercel.app/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messages: [{ role: "user", content: text }] }),
     });
 
     const data = await response.json();
-    const reply = data.response || "No response generated.";
+    const reply = data.text || "⚠️ Gemini didn't respond.";
 
-    bot.sendMessage(chatId, reply, { parse_mode: "Markdown" });
-  } catch (error) {
-    console.error(error);
-    bot.sendMessage(chatId, "❌ Failed to connect to Gemini endpoint.");
+    await sendMessage(chatId, reply);
+    return res.status(200).send("Sent");
+  } catch (err) {
+    console.error("Gemini API Error:", err);
+    await sendMessage(chatId, "🚫 Gemini API failed to respond.");
+    return res.status(500).send("Error");
   }
-});
+}
 
-// Dummy HTTP response for Vercel's API route
-export default function handler(req, res) {
-  res.status(200).send('Telegram bot is running!');
+async function sendMessage(chatId, text, parse_mode = null) {
+  const url = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`;
+  await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      chat_id: chatId,
+      text,
+      ...(parse_mode && { parse_mode }),
+    }),
+  });
 }
