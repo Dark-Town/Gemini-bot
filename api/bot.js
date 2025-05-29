@@ -1,12 +1,11 @@
 import fetch from "node-fetch";
 
-// In-memory storage (will reset if bot restarts)
 let codes = {};         // { code: { expires: timestamp } }
 let access = {};        // { userId: true }
 
 const ADMIN_ID = process.env.ADMIN_ID;
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const GEMINI_API = "https://gemini-bot-paidtech.vercel.app/api/chat";
+const GEMINI_API = "https://gemini-bot-paidtech.vercel.app/api/chat"; // Your POST endpoint
 
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).send("Only POST");
@@ -15,7 +14,6 @@ export default async function handler(req, res) {
   const message = body.message;
   const callback = body.callback_query;
 
-  // 🔘 Handle Button Clicks
   if (callback) {
     const chatId = callback.message.chat.id;
     const userId = callback.from.id;
@@ -34,14 +32,14 @@ export default async function handler(req, res) {
   const userId = message.from.id;
   const text = message.text.trim();
 
-  // 🟢 START: Welcome
+  // 🟢 Welcome
   if (text === "/start") {
     return await sendButtons(chatId, "👋 Welcome to *TCRONEB Gemini Bot*\n\nThis bot requires a premium code to use AI features.", [
       [{ text: "🔐 Enter Premium Code", callback_data: "enter_code" }],
     ], res);
   }
 
-  // 🛠 ADMIN: /generate CODE HOURS
+  // 🛠 Admin: Generate premium code
   if (text.startsWith("/generate") && String(userId) === ADMIN_ID) {
     const [, code, hourStr] = text.split(" ");
     const hours = parseInt(hourStr) || 24;
@@ -50,7 +48,7 @@ export default async function handler(req, res) {
     return await sendMessage(chatId, `✅ Code *${code}* created.\nExpires in ${hours} hours.`, "Markdown", res);
   }
 
-  // 🔑 User enters: code: YOURCODE
+  // 🔑 Code input
   if (text.startsWith("code:")) {
     const inputCode = text.split("code:")[1]?.trim();
     const match = codes[inputCode];
@@ -63,14 +61,14 @@ export default async function handler(req, res) {
     }
   }
 
-  // 🚫 Block if no code
+  // 🚫 Require code
   if (!access[userId]) {
     return await sendButtons(chatId, "🔒 You need to enter a valid premium code first.", [
       [{ text: "🔐 Enter Premium Code", callback_data: "enter_code" }],
     ], res);
   }
 
-  // ✅ Forward message to Gemini
+  // ✅ Send to Gemini API (POST)
   try {
     const geminiRes = await fetch(GEMINI_API, {
       method: "POST",
@@ -89,7 +87,7 @@ export default async function handler(req, res) {
   }
 }
 
-// 📩 Send plain message
+// 📩 Send message
 async function sendMessage(chatId, text, parse_mode = null, res = null) {
   await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
     method: "POST",
@@ -99,7 +97,7 @@ async function sendMessage(chatId, text, parse_mode = null, res = null) {
   if (res) res.status(200).send("OK");
 }
 
-// 🔘 Send inline keyboard
+// 🔘 Inline button
 async function sendButtons(chatId, text, buttons, res) {
   await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
     method: "POST",
