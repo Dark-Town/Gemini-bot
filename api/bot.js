@@ -3,10 +3,6 @@ import express from "express";
 const app = express();
 app.use(express.json());
 
-app.get("/api/keepalive", (req, res) => {
-  res.status(200).send("I am alive!");
-});
-
 app.post("/api/bot", async (req, res) => {
   const update = req.body;
   console.log("Update received:", JSON.stringify(update, null, 2));
@@ -20,39 +16,42 @@ app.post("/api/bot", async (req, res) => {
 
   try {
     if (userText === "/start") {
-      await sendTelegramMessage(chat_id, "Welcome! This bot replies using Gemini API.");
+      await sendTelegramMessage(chat_id, "👋 Welcome! Send me any text, and I'll reply using Gemini API.");
       return res.status(200).send("ok");
     }
 
-    // Call Gemini API
-    const geminiResponse = await fetch(process.env.GEMINI_API_URL, {
+    // Call Google Gemini Generative Language API
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${process.env.GEMINI_API_KEY}`;
+
+    const response = await fetch(url, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${process.env.GEMINI_API_KEY}`,
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: "gemini-1", // adjust your model if needed
-        messages: [
-          { role: "user", content: userText }
-        ],
+        contents: [
+          {
+            parts: [
+              { text: userText }
+            ]
+          }
+        ]
       }),
     });
 
-    if (!geminiResponse.ok) {
-      const errorText = await geminiResponse.text();
+    if (!response.ok) {
+      const errorText = await response.text();
       console.error("Gemini API error:", errorText);
       await sendTelegramMessage(chat_id, "Gemini API error:\n" + errorText);
       return res.status(200).send("gemini error");
     }
 
-    const geminiData = await geminiResponse.json();
-    const botReply = geminiData.choices?.[0]?.message?.content || "No reply from Gemini";
+    const data = await response.json();
+
+    const botReply = data.candidates?.[0]?.content || "Sorry, no reply from Gemini API.";
 
     await sendTelegramMessage(chat_id, botReply);
 
   } catch (err) {
-    console.error("Fetch or other error:", err);
+    console.error("Error:", err);
     await sendTelegramMessage(chat_id, `Oops, something went wrong:\n${err.message || err}`);
   }
 
