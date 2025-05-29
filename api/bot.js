@@ -1,149 +1,69 @@
-import fetch from "node-fetch";
+// /api/bot.js - Telegram Gemini Bot with OpenAI and Premium Code System import fetch from "node-fetch";
 
-const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const ADMIN_ID = process.env.ADMIN_ID;
+const ADMIN_ID = process.env.ADMIN_ID; // Your Telegram user ID const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN; const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
-let promoCodes = {}; // { code: { expires } }
-let authorized = {}; // { userId: true }
+let promoCodes = {};  // { code: { expires: timestamp } } let authorized = {};  // { userId: true }
 
-export default async function handler(req, res) {
-  if (req.method !== "POST") return res.status(405).send("Method Not Allowed");
+export default async function handler(req, res) { if (req.method !== "POST") return res.status(405).send("Method Not Allowed");
 
-  const update = req.body;
+const body = req.body; const msg = body.message; const cb = body.callback_query;
 
-  // Handle callback queries first
-  if (update.callback_query) {
-    const chatId = update.callback_query.message.chat.id;
-    const userId = update.callback_query.from.id;
-    const data = update.callback_query.data;
+if (cb) { const chatId = cb.message.chat.id; const userId = cb.from.id; const data = cb.data;
 
-    // Answer callback query to remove loading state
-    await answerCallbackQuery(update.callback_query.id);
-
-    if (data === "enter_code") {
-      await sendMessage(chatId, "🔐 Send your premium code like:\n\n`code: YOURCODE`", "Markdown");
-    }
-
-    return res.status(200).send("OK");
-  }
-
-  // Handle messages
-  if (!update.message || !update.message.text) return res.status(200).send("No text message");
-
-  const chatId = update.message.chat.id;
-  const userId = update.message.from.id;
-  const text = update.message.text.trim();
-
-  // Send 'typing...' action immediately
-  sendChatAction(chatId, "typing").catch(() => {});
-
-  if (text === "/start") {
-    await sendInlineKeyboard(chatId,
-      "👋 *Welcome to TCRONEB Gemini Bot*\n\nJoin [@paidtechzone](https://t.me/paidtechzone) & enter your premium code.",
-      [[{ text: "🔐 Enter Premium Code", callback_data: "enter_code" }]]
-    );
-    return res.status(200).send("OK");
-  }
-
-  if (text.startsWith("/generate") && String(userId) === ADMIN_ID) {
-    const parts = text.split(" ");
-    if (parts.length < 2) {
-      await sendMessage(chatId, "❗ Usage: /generate CODE [hours]");
-      return res.status(200).send("OK");
-    }
-    const code = parts[1];
-    const hours = parseInt(parts[2]) || 24;
-    const expires = Date.now() + hours * 3600000;
-    promoCodes[code] = { expires };
-    await sendMessage(chatId, `✅ Premium code *${code}* valid for ${hours} hours.`, "Markdown");
-    return res.status(200).send("OK");
-  }
-
-  if (text.toLowerCase().startsWith("code:")) {
-    const inputCode = text.split("code:")[1].trim();
-    const promo = promoCodes[inputCode];
-    if (promo && promo.expires > Date.now()) {
-      authorized[userId] = true;
-      await sendMessage(chatId, "✅ Code accepted. You may now chat with Gemini.");
-    } else {
-      await sendMessage(chatId, "❌ Invalid or expired code. Try again.");
-    }
-    return res.status(200).send("OK");
-  }
-
-  if (!authorized[userId]) {
-    await sendInlineKeyboard(chatId,
-      "🚫 You must enter a premium code to use Gemini.",
-      [[{ text: "🔐 Enter Premium Code", callback_data: "enter_code" }]]
-    );
-    return res.status(200).send("OK");
-  }
-
-  // User authorized, process Gemini API call
-  await sendChatAction(chatId, "typing");
-
-  try {
-    const geminiResponse = await fetch("https://gemini-bot-paidtech.vercel.app/api/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ messages: [{ role: "user", content: text }] })
-    });
-
-    const data = await geminiResponse.json();
-    const reply = data.text || "⚠️ No response from Gemini.";
-    await sendMessage(chatId, reply);
-  } catch (error) {
-    console.error("Gemini API error:", error);
-    await sendMessage(chatId, "🚫 Gemini API failed to respond.");
-  }
-
-  res.status(200).send("OK");
+if (data === "enter_code") {
+  await send(chatId, "🔑 Send your premium code like:\n\n`code: YOURCODE`", "Markdown");
 }
 
-// Send message helper
-async function sendMessage(chatId, text, parse_mode = null) {
-  return fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      chat_id: chatId,
-      text,
-      ...(parse_mode ? { parse_mode } : {})
-    })
-  });
+return res.status(200).send("Callback handled");
+
 }
 
-// Send message with inline keyboard helper
-async function sendInlineKeyboard(chatId, text, inline_keyboard) {
-  return fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      chat_id: chatId,
-      text,
-      parse_mode: "Markdown",
-      reply_markup: { inline_keyboard }
-    })
-  });
+if (!msg || !msg.text) return res.status(200).send("No message");
+
+const chatId = msg.chat.id; const userId = msg.from.id; const text = msg.text.trim();
+
+if (text === "/start") { await send(chatId, 👋 *Welcome to TCRONEB ASSISTANT!*\n\n🤖 Powered by OpenAI\n🎥 Created by TCRONEB HACKX\n📺 Join @paidtechzone for updates., "Markdown");
+
+// Play GitHub video
+await sendVideo(chatId, "https://github.com/Dark-Town/my-apu/raw/main/ssstik.io_%40van.dungx.888_1748038545671.mp4");
+
+return sendInline(chatId, "👇 Use the button below to enter your premium code.", [
+  [{ text: "🔐 Enter Premium Code", callback_data: "enter_code" }]
+]);
+
 }
 
-// Send typing action helper
-async function sendChatAction(chatId, action) {
-  return fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendChatAction`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      chat_id: chatId,
-      action
-    })
-  });
+if (text.startsWith("/generate") && String(userId) === ADMIN_ID) { const [, code, hoursStr] = text.split(" "); const hours = parseInt(hoursStr) || 24; const expires = Date.now() + hours * 3600000; promoCodes[code] = { expires }; return send(chatId, ✅ Premium code *${code}* valid for ${hours} hours., "Markdown"); }
+
+if (text.startsWith("code:")) { const input = text.split("code:")[1]?.trim(); const match = promoCodes[input];
+
+if (match && match.expires > Date.now()) {
+  authorized[userId] = true;
+  return send(chatId, "✅ Code accepted. You may now chat with Gemini.");
+} else {
+  return send(chatId, "❌ Invalid or expired code. Try again.");
 }
 
-// Answer callback query to remove loading spinner
-async function answerCallbackQuery(callbackQueryId) {
-  return fetch(`https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ callback_query_id: callbackQueryId })
-  });
 }
+
+if (!authorized[userId]) { return sendInline(chatId, "🚫 You must enter a premium code to use Gemini.", [ [{ text: "🔐 Enter Premium Code", callback_data: "enter_code" }] ]); }
+
+// 🤖 Auto response for special queries const lowered = text.toLowerCase(); if (lowered.includes("who created") || lowered.includes("your creator")) { return send(chatId, "👨‍💻 I was created by TCRONEB HACKX — the best hacker/dev in Zimbabwe!", "Markdown"); } if (lowered.includes("best dev") || lowered.includes("best hacker")) { return send(chatId, "👑 Without a doubt: TCRONEB HACKX!", "Markdown"); }
+
+await send(chatId, "⏳ Thinking...");
+
+try { const ai = await fetch("https://api.openai.com/v1/chat/completions", { method: "POST", headers: { "Content-Type": "application/json", "Authorization": Bearer ${OPENAI_API_KEY} }, body: JSON.stringify({ model: "gpt-4", messages: [ { role: "system", content: "You are Gemini bot built by TCRONEB HACKX." }, { role: "user", content: text } ] }) });
+
+const result = await ai.json();
+const reply = result.choices?.[0]?.message?.content || "⚠️ No response from Gemini.";
+
+return send(chatId, reply);
+
+} catch (err) { console.error("OpenAI error:", err); return send(chatId, "🚫 Gemini API failed to respond."); } }
+
+async function send(chatId, text, parse_mode = null) { return await fetch(https://api.telegram.org/bot${BOT_TOKEN}/sendMessage, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ chat_id: chatId, text, ...(parse_mode && { parse_mode }) }) }); }
+
+async function sendInline(chatId, text, buttons) { return await fetch(https://api.telegram.org/bot${BOT_TOKEN}/sendMessage, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ chat_id: chatId, text, parse_mode: "Markdown", reply_markup: { inline_keyboard: buttons } }) }); }
+
+async function sendVideo(chatId, videoUrl) { return await fetch(https://api.telegram.org/bot${BOT_TOKEN}/sendVideo, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ chat_id: chatId, video: videoUrl }) }); }
+
