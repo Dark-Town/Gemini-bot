@@ -1,245 +1,66 @@
-import express from "express";
 import fetch from "node-fetch";
 
-const app = express();
-app.use(express.json());
-
-const BOT_TOKEN = process.env.BOT_TOKEN;
+const BOT_TOKEN = process.env.BOT_TOKEN; // Your bot token here
+const CHANNEL_USERNAME = "paidtechzone"; // Your channel username without @
+const ADMIN_ID = 123456789; // Your Telegram user ID as number
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const CHANNEL_USERNAME = "yourchannelname"; // no @
-const ADMIN_ID = 123456789; // your Telegram user id
 
-// Store codes and temp access (in-memory for demo; use DB in prod)
-const premiumCodes = {};
-const tempAccessUsers = new Set();
+const TELEGRAM_API = `https://api.telegram.org/bot${BOT_TOKEN}`;
 
-function telegramApi(method, body) {
-  return fetch(`https://api.telegram.org/bot${BOT_TOKEN}/${method}`, {
+let tempAccessUsers = new Map(); // userId => expiry timestamp
+
+// Helper: send Telegram API requests
+async function telegramApi(method, data) {
+  const res = await fetch(`${TELEGRAM_API}/${method}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  }).then((res) => res.json());
+    body: JSON.stringify(data),
+  });
+  return res.json();
 }
 
-async function getChannelPhoto() {
-  try {
-    const res = await telegramApi("getChat", { chat_id: `@${CHANNEL_USERNAME}` });
-    if (!res.ok) return null;
-
-    const photo = res.result.photo;
-    if (!photo) return null;
-
-    // Get biggest photo file_id
-    const fileId = photo.big_file_id || photo.small_file_id;
-    const fileRes = await telegramApi("getFile", { file_id: fileId });
-    if (!fileRes.ok) return null;
-
-    return `https://api.telegram.org/file/bot${BOT_TOKEN}/${fileRes.result.file_path}`;
-  } catch {
-    return null;
-  }
-}
-
+// Helper: check if user joined channel
 async function userIsMember(userId) {
   try {
-    const res = await telegramApi("getChatMember", {
-      chat_id: `@${CHANNEL_USERNAME}`,
-      user_id: userId,
-    });
-    return ["member", "creator", "administrator"].includes(res.result.status);
-  } catch {
-    return false;
-  }
+    const res = await fetch(
+      `${TELEGRAM_API}/getChatMember?chat_id=@${CHANNEL_USERNAME}&user_id=${userId}`
+    );
+    const data = await res.json();
+    if (
+      data.ok &&
+      ["member", "administrator", "creator"].includes(data.result.status)
+    )
+      return true;
+  } catch (e) {}
+  return false;
 }
 
-function escapeHTML(text) {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-}
-
-function formatBotReply(text) {
-  // If looks like code (has < or > or HTML tags), send as quote
-  if (/<\/?[a-z][\s\S]*>/i.test(text)) {
-    return `📜 <pre>${escapeHTML(text)}</pre>`;
-  }
-  return text;
-}
-
-app.post("/api/bot", async (req, res) => {
-  const update = req.body;
-
-  if (!update.message) return res.sendStatus(200);
-  const msg = update.message;
-  const chatId = msg.chat.id;
-  const userId = msg.from.id;
-  const text = msg.text?.trim() || "";
-
-  // Handle /start command - send welcome with channel photo + buttons
-  if (text === "/start") {
-    const channelPhotoUrl = await getChannelPhoto();
-
-    const welcomeText = `👋 Hello, ${msg.from.first_name}!\n\n` +
-      `Welcome to this bot. To use it, please join our channel or enter a premium code.\n\n` +
-      `Channel: @${CHANNEL_USERNAME}`;
-
-    const keyboard = {
-      inline_keyboard: [
-        [
-          { text: "✅ Join Channel", url: `https://t.me/${CHANNEL_USERNAME}` },
-          { text: "🔑 Use Premium Code", callback_data: "use_premium" },
-        ],
-      ],
-    };
-
-    // Send photo if available
-    if (channelPhotoUrl) {
-      await telegramApi("sendPhoto", {
-        chat_id: chatId,
-        photo: channelPhotoUrl,
-        caption: welcomeText,
-        reply_markup: keyboard,
-      });
-    } else {
-      await telegramApi("sendMessage", {
-        chat_id: chatId,
-        text: welcomeText,
-        reply_markup: keyboard,
-      });
-    }
-
-    return res.sendStatus(200);
-  }
-
-  // Handle callback queries (buttons)
-  if (update.callback_query) {
-    const cb = update.callback_query;
-    const cbData = cb.data;
-    const cbChatId = cb.message.chat.id;
-    const cbUserId = cb.from.id;
-
-    if (cbData === "use_premium") {
-      await telegramApi("answerCallbackQuery", {
-        callback_query_id: cb.id,
-        text: "Please send me your premium code now.",
-        show_alert: false,
-      });
-      await telegramApi("sendMessage", {
-        chat_id: cbChatId,
-        text: "🔑 Send your premium code:",
-      });
-      return res.sendStatus(200);
-    }
-
-    if (cbData.startsWith("create_code")) {
-      if (cbUserId !== ADMIN_ID) {
-        await telegramApi("answerCallbackQuery", {
-          callback_query_id: cb.id,
-          text: "❌ Only admin can create premium codes.",
-          show_alert: true,
-        });
-        return res.sendStatus(200);
-      }
-      await telegramApi("answerCallbackQuery", {
-        callback_query_id: cb.id,
-        text: "Send me the new premium code as a message.",
-        show_alert: false,
-      });
-      return res.sendStatus(200);
-    }
-
-    return res.sendStatus(200);
-  }
-
-  // Check if user is admin creating code
-  if (text.startsWith("/createcode ")) {
-    if (userId !== ADMIN_ID) {
-      await telegramApi("sendMessage", {
-        chat_id: chatId,
-        text: "❌ You are not authorized to create premium codes.",
-      });
-      return res.sendStatus(200);
-    }
-    const code = text.split(" ")[1];
-    if (!code) {
-      await telegramApi("sendMessage", {
-        chat_id: chatId,
-        text: "❌ Usage: /createcode yourcode",
-      });
-      return res.sendStatus(200);
-    }
-    if (premiumCodes[code]) {
-      await telegramApi("sendMessage", {
-        chat_id: chatId,
-        text: "❌ Code already exists.",
-      });
-      return res.sendStatus(200);
-    }
-    premiumCodes[code] = false; // not used yet
-    await telegramApi("sendMessage", {
-      chat_id: chatId,
-      text: `✅ Premium code created: ${code}`,
-    });
-    return res.sendStatus(200);
-  }
-
-  // Check if user joined channel OR has temp access
-  const isMember = await userIsMember(userId);
-  const hasTempAccess = tempAccessUsers.has(userId);
-
-  // Handle premium code usage (one-time)
-  if (premiumCodes[text] === false) {
-    premiumCodes[text] = true; // mark used
-    tempAccessUsers.add(userId);
-
-    await telegramApi("sendMessage", {
-      chat_id: chatId,
-      text: "✅ Premium code accepted! You have 10 seconds of access.",
-    });
-
-    setTimeout(() => {
-      tempAccessUsers.delete(userId);
-      telegramApi("sendMessage", {
-        chat_id: chatId,
-        text: "⌛ Your premium access has expired. Please join the channel or enter a new code.",
-      });
-    }, 10 * 1000);
-
-    return res.sendStatus(200);
-  } else if (premiumCodes[text] === true) {
-    await telegramApi("sendMessage", {
-      chat_id: chatId,
-      text: "❌ This premium code was already used.",
-    });
-    return res.sendStatus(200);
-  }
-
-  if (!isMember && !hasTempAccess) {
-    // User must join or use code
-    await telegramApi("sendMessage", {
-      chat_id: chatId,
-      text:
-        "❗ To use this bot, you must join our channel or enter a premium code.\n\n" +
-        `Channel: https://t.me/${CHANNEL_USERNAME}`,
-      reply_markup: {
-        inline_keyboard: [
-          [
-            { text: "✅ Join Channel", url: `https://t.me/${CHANNEL_USERNAME}` },
-            { text: "🔑 Use Premium Code", callback_data: "use_premium" },
-          ],
-        ],
-      },
-    });
-    return res.sendStatus(200);
-  }
-
-  // User passed checks — show "typing" action
-  await telegramApi("sendChatAction", { chat_id: chatId, action: "typing" });
-
-  // Send user message to Gemini API
+// Helper: get channel photo URL
+async function getChannelPhoto() {
   try {
-    const geminiRes = await fetch(
+    const res = await fetch(
+      `${TELEGRAM_API}/getChat?chat_id=@${CHANNEL_USERNAME}`
+    );
+    const data = await res.json();
+    if (data.ok && data.result.photo) {
+      const fileId = data.result.photo.big_file_id || data.result.photo.small_file_id;
+      // Get file path
+      const fileRes = await fetch(
+        `${TELEGRAM_API}/getFile?file_id=${fileId}`
+      );
+      const fileData = await fileRes.json();
+      if (fileData.ok) {
+        return `https://api.telegram.org/file/bot${BOT_TOKEN}/${fileData.result.file_path}`;
+      }
+    }
+  } catch {}
+  return null;
+}
+
+// Gemini API call to generate content
+async function generateGeminiReply(text) {
+  try {
+    const res = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
       {
         method: "POST",
@@ -249,34 +70,186 @@ app.post("/api/bot", async (req, res) => {
         }),
       }
     );
-    const geminiJson = await geminiRes.json();
-
-    if (!geminiRes.ok || !geminiJson.candidates || !geminiJson.candidates.length) {
-      throw new Error("No response from Gemini API");
+    const data = await res.json();
+    if (data.candidates && data.candidates.length > 0) {
+      // Gemini returns { parts: [{ text }] }
+      return data.candidates[0].content.parts
+        .map((p) => p.text)
+        .join("\n");
+    } else if (data.error) {
+      return `Error from Gemini API: ${data.error.message}`;
     }
-
-    let botReply = geminiJson.candidates[0].output.content;
-    if (typeof botReply === "object" && botReply.parts) {
-      botReply = botReply.parts.map((p) => p.text).join("\n");
-    }
-
-    const formattedReply = formatBotReply(botReply);
-
-    await telegramApi("sendMessage", {
-      chat_id: chatId,
-      text: formattedReply,
-      parse_mode: "HTML",
-    });
+    return "No response from Gemini.";
   } catch (e) {
-    await telegramApi("sendMessage", {
-      chat_id: chatId,
-      text: "⚠️ Oops, something went wrong. Please try again later.",
-    });
+    return "Failed to contact Gemini API.";
+  }
+}
+
+export default async function handler(req, res) {
+  if (req.method !== "POST") return res.status(405).send("Only POST allowed");
+  const body = req.body;
+
+  const message = body.message || body.callback_query?.message;
+  if (!message) return res.status(200).send("No message");
+
+  const chatId = message.chat.id;
+  const userId = message.from.id;
+  const text = message.text || "";
+
+  // Handle callback_query buttons
+  if (body.callback_query) {
+    const data = body.callback_query.data;
+    if (data === "use_premium") {
+      await telegramApi("sendMessage", {
+        chat_id: chatId,
+        text:
+          "Please enter your premium code now. You will get 10 seconds access if code is valid.",
+      });
+      return res.status(200).send("OK");
+    }
+    if (data.startsWith("create_code_")) {
+      // Admin creating a premium code
+      if (userId !== ADMIN_ID) {
+        await telegramApi("answerCallbackQuery", {
+          callback_query_id: body.callback_query.id,
+          text: "You are not authorized to create premium codes.",
+          show_alert: true,
+        });
+        return res.status(200).send("OK");
+      }
+      const code = data.split("_")[2];
+      // Store code in memory with expiry (let’s keep simple)
+      premiumCodes.set(code, Date.now() + 10 * 1000); // 10 seconds validity
+      await telegramApi("answerCallbackQuery", {
+        callback_query_id: body.callback_query.id,
+        text: `Premium code "${code}" created and valid for 10 seconds.`,
+      });
+      return res.status(200).send("OK");
+    }
+    return res.status(200).send("OK");
   }
 
-  return res.sendStatus(200);
-});
+  // Temporary in-memory premium codes store
+  if (typeof global.premiumCodes === "undefined") {
+    global.premiumCodes = new Map();
+  }
+  const premiumCodes = global.premiumCodes;
 
-app.listen(3000, () => console.log("Bot running on port 3000"));
+  // Clean expired codes
+  for (const [code, expiry] of premiumCodes.entries()) {
+    if (expiry < Date.now()) premiumCodes.delete(code);
+  }
 
-export default app;
+  // Command: /start
+  if (text === "/start") {
+    const channelPhotoUrl = await getChannelPhoto();
+
+    let welcomeText = `👋 Welcome to the Gemini Bot!\n\n` +
+      `Please join our channel @${CHANNEL_USERNAME} to use this bot or enter a premium code.\n\n` +
+      `You can also ask me anything powered by Gemini AI.`;
+
+    // Send welcome message with photo and buttons
+    if (channelPhotoUrl) {
+      await telegramApi("sendPhoto", {
+        chat_id: chatId,
+        photo: channelPhotoUrl,
+        caption: welcomeText,
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: "✅ Join Channel", url: `https://t.me/${CHANNEL_USERNAME}` },
+              { text: "🔑 Use Premium Code", callback_data: "use_premium" },
+            ],
+          ],
+        },
+      });
+    } else {
+      await telegramApi("sendMessage", {
+        chat_id: chatId,
+        text: welcomeText,
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: "✅ Join Channel", url: `https://t.me/${CHANNEL_USERNAME}` },
+              { text: "🔑 Use Premium Code", callback_data: "use_premium" },
+            ],
+          ],
+        },
+      });
+    }
+    return res.status(200).send("OK");
+  }
+
+  // Check if user is admin
+  const isAdmin = userId === ADMIN_ID;
+
+  // Check user membership
+  const isMember = await userIsMember(userId);
+
+  // Check if user has temp access
+  const hasTempAccess = tempAccessUsers.has(userId);
+
+  // If user sent a message that looks like a premium code
+  if (premiumCodes.has(text)) {
+    tempAccessUsers.set(userId, Date.now() + 10 * 1000); // 10 seconds
+    premiumCodes.delete(text);
+    await telegramApi("sendMessage", {
+      chat_id: chatId,
+      text: `✅ Premium code accepted! You have 10 seconds to use the bot.`,
+    });
+    return res.status(200).send("OK");
+  }
+
+  if (!isAdmin && !isMember && !hasTempAccess) {
+    await telegramApi("sendMessage", {
+      chat_id: chatId,
+      text:
+        `🚫 You must either join our channel @${CHANNEL_USERNAME} or enter a valid premium code.\nChoose below:`,
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: "✅ Join Channel", url: `https://t.me/${CHANNEL_USERNAME}` },
+            { text: "🔑 Use Premium Code", callback_data: "use_premium" },
+          ],
+        ],
+      },
+    });
+    return res.status(200).send("OK");
+  }
+
+  // Remove expired temp access
+  if (hasTempAccess && tempAccessUsers.get(userId) < Date.now()) {
+    tempAccessUsers.delete(userId);
+    await telegramApi("sendMessage", {
+      chat_id: chatId,
+      text: "⏰ Your premium access expired. Please join the channel or enter a new code.",
+    });
+    return res.status(200).send("OK");
+  }
+
+  // Send typing action while waiting Gemini reply
+  await telegramApi("sendChatAction", {
+    chat_id: chatId,
+    action: "typing",
+  });
+
+  // Get Gemini reply
+  let reply = await generateGeminiReply(text);
+
+  // Format reply: if contains HTML tags, wrap in quotes
+  if (/<\/?[a-z][\s\S]*>/i.test(reply)) {
+    reply = `📄 <code>${reply
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")}</code>`;
+  }
+
+  // Send reply message
+  await telegramApi("sendMessage", {
+    chat_id: chatId,
+    text: reply,
+    parse_mode: "HTML",
+  });
+
+  return res.status(200).send("OK");
+        }
