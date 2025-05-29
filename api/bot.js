@@ -1,60 +1,56 @@
-// /api/bot.js - Telegram Gemini Bot with auto reaction and proper message handling
 import fetch from "node-fetch";
 
-const ADMIN_ID = process.env.ADMIN_ID;
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+const ADMIN_ID = process.env.ADMIN_ID;
 
-let promoCodes = {};  // { code: { expires: timestamp } }
-let authorized = {};  // { userId: true }
+let promoCodes = {};   // { code: { expires } }
+let authorized = {};   // { userId: true }
 
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).send("Method Not Allowed");
 
-  const body = req.body;
-  const msg = body.message;
-  const cb = body.callback_query;
+  const { message, callback_query } = req.body;
 
-  if (cb) {
-    const chatId = cb.message.chat.id;
-    const userId = cb.from.id;
-    const data = cb.data;
+  if (callback_query) {
+    const chatId = callback_query.message.chat.id;
+    const userId = callback_query.from.id;
+    const data = callback_query.data;
 
     if (data === "enter_code") {
-      await send(chatId, "🔑 Send your premium code like:\n\n`code: YOURCODE`", "Markdown");
+      await send(chatId, "🔐 Send your premium code like:\n\n`code: YOURCODE`", "Markdown");
     }
 
     return res.status(200).send("Callback handled");
   }
 
-  if (!msg || !msg.text) return res.status(200).send("No message");
+  if (!message || !message.text) return res.status(200).send("No text");
 
-  const chatId = msg.chat.id;
-  const userId = msg.from.id;
-  const text = msg.text.trim();
+  const chatId = message.chat.id;
+  const userId = message.from.id;
+  const text = message.text.trim();
 
   if (text === "/start") {
-    return sendInline(chatId, `👋 Welcome to *TCRONEB Gemini Bot*\n\nJoin @paidtechzone & enter your code.`, [
+    return sendInline(chatId, `👋 *Welcome to TCRONEB Gemini Bot*\n\n🚀 I was created by TCRONEB.\nJoin [@paidtechzone](https://t.me/paidtechzone) & use a valid premium code.`, [
       [{ text: "🔐 Enter Premium Code", callback_data: "enter_code" }]
     ]);
   }
 
   if (text.startsWith("/generate") && String(userId) === ADMIN_ID) {
     const [, code, hoursStr] = text.split(" ");
-    const hours = parseInt(hoursStr) || 24;
-    const expires = Date.now() + hours * 3600000;
-    promoCodes[code] = { expires };
+    const hours = parseInt(hoursStr || "24");
+    promoCodes[code] = { expires: Date.now() + hours * 3600000 };
     return send(chatId, `✅ Premium code *${code}* valid for ${hours} hours.`, "Markdown");
   }
 
-  if (text.startsWith("code:")) {
-    const input = text.split("code:")[1]?.trim();
-    const match = promoCodes[input];
+  if (text.toLowerCase().startsWith("code:")) {
+    const codeInput = text.split("code:")[1]?.trim();
+    const match = promoCodes[codeInput];
 
     if (match && match.expires > Date.now()) {
       authorized[userId] = true;
-      return send(chatId, "✅ Code accepted. You may now chat with Gemini.");
+      return send(chatId, "✅ Code accepted. You may now use Gemini.");
     } else {
-      return send(chatId, "❌ Invalid or expired code. Try again.");
+      return send(chatId, "❌ Invalid or expired code.");
     }
   }
 
@@ -64,8 +60,7 @@ export default async function handler(req, res) {
     ]);
   }
 
-  // ✅ React to user message before Gemini
-  await send(chatId, "✅ Processing...");
+  await send(chatId, "✍️ Thinking...");
 
   try {
     const gemini = await fetch("https://gemini-bot-paidtech.vercel.app/api/chat", {
@@ -76,18 +71,18 @@ export default async function handler(req, res) {
       })
     });
 
-    const data = await gemini.json();
-    const reply = data.text || "⚠️ No response from Gemini.";
+    const result = await gemini.json();
+    const reply = result.text || "⚠️ No response from Gemini.";
 
     return send(chatId, reply);
-  } catch (e) {
-    console.error("Gemini error:", e);
+  } catch (err) {
+    console.error("Gemini fetch error:", err);
     return send(chatId, "🚫 Gemini API failed to respond.");
   }
 }
 
 async function send(chatId, text, parse_mode = null) {
-  return await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+  return fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -99,7 +94,7 @@ async function send(chatId, text, parse_mode = null) {
 }
 
 async function sendInline(chatId, text, buttons) {
-  return await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+  return fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -109,4 +104,4 @@ async function sendInline(chatId, text, buttons) {
       reply_markup: { inline_keyboard: buttons }
     })
   });
-}
+              }
