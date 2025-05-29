@@ -3,97 +3,118 @@ import fetch from "node-fetch";
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const ADMIN_ID = process.env.ADMIN_ID;
 
-let promoCodes = {};   // { code: { expires } }
-let authorized = {};   // { userId: true }
+let promoCodes = {}; // { code: { expires } }
+let authorized = {}; // { userId: true }
 
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).send("Method Not Allowed");
 
-  const { message, callback_query } = req.body;
+  const update = req.body;
 
-  if (callback_query) {
-    const chatId = callback_query.message.chat.id;
-    const userId = callback_query.from.id;
-    const data = callback_query.data;
+  // Handle callback queries first
+  if (update.callback_query) {
+    const chatId = update.callback_query.message.chat.id;
+    const userId = update.callback_query.from.id;
+    const data = update.callback_query.data;
+
+    // Answer callback query to remove loading state
+    await answerCallbackQuery(update.callback_query.id);
 
     if (data === "enter_code") {
-      await send(chatId, "🔐 Send your premium code like:\n\n`code: YOURCODE`", "Markdown");
+      await sendMessage(chatId, "🔐 Send your premium code like:\n\n`code: YOURCODE`", "Markdown");
     }
 
-    return res.status(200).send("Callback handled");
+    return res.status(200).send("OK");
   }
 
-  if (!message || !message.text) return res.status(200).send("No text");
+  // Handle messages
+  if (!update.message || !update.message.text) return res.status(200).send("No text message");
 
-  const chatId = message.chat.id;
-  const userId = message.from.id;
-  const text = message.text.trim();
+  const chatId = update.message.chat.id;
+  const userId = update.message.from.id;
+  const text = update.message.text.trim();
+
+  // Send 'typing...' action immediately
+  sendChatAction(chatId, "typing").catch(() => {});
 
   if (text === "/start") {
-    return sendInline(chatId, `👋 *Welcome to TCRONEB Gemini Bot*\n\n🚀 I was created by TCRONEB.\nJoin [@paidtechzone](https://t.me/paidtechzone) & use a valid premium code.`, [
-      [{ text: "🔐 Enter Premium Code", callback_data: "enter_code" }]
-    ]);
+    await sendInlineKeyboard(chatId,
+      "👋 *Welcome to TCRONEB Gemini Bot*\n\nJoin [@paidtechzone](https://t.me/paidtechzone) & enter your premium code.",
+      [[{ text: "🔐 Enter Premium Code", callback_data: "enter_code" }]]
+    );
+    return res.status(200).send("OK");
   }
 
   if (text.startsWith("/generate") && String(userId) === ADMIN_ID) {
-    const [, code, hoursStr] = text.split(" ");
-    const hours = parseInt(hoursStr || "24");
-    promoCodes[code] = { expires: Date.now() + hours * 3600000 };
-    return send(chatId, `✅ Premium code *${code}* valid for ${hours} hours.`, "Markdown");
+    const parts = text.split(" ");
+    if (parts.length < 2) {
+      await sendMessage(chatId, "❗ Usage: /generate CODE [hours]");
+      return res.status(200).send("OK");
+    }
+    const code = parts[1];
+    const hours = parseInt(parts[2]) || 24;
+    const expires = Date.now() + hours * 3600000;
+    promoCodes[code] = { expires };
+    await sendMessage(chatId, `✅ Premium code *${code}* valid for ${hours} hours.`, "Markdown");
+    return res.status(200).send("OK");
   }
 
   if (text.toLowerCase().startsWith("code:")) {
-    const codeInput = text.split("code:")[1]?.trim();
-    const match = promoCodes[codeInput];
-
-    if (match && match.expires > Date.now()) {
+    const inputCode = text.split("code:")[1].trim();
+    const promo = promoCodes[inputCode];
+    if (promo && promo.expires > Date.now()) {
       authorized[userId] = true;
-      return send(chatId, "✅ Code accepted. You may now use Gemini.");
+      await sendMessage(chatId, "✅ Code accepted. You may now chat with Gemini.");
     } else {
-      return send(chatId, "❌ Invalid or expired code.");
+      await sendMessage(chatId, "❌ Invalid or expired code. Try again.");
     }
+    return res.status(200).send("OK");
   }
 
   if (!authorized[userId]) {
-    return sendInline(chatId, "🚫 You must enter a premium code to use Gemini.", [
-      [{ text: "🔐 Enter Premium Code", callback_data: "enter_code" }]
-    ]);
+    await sendInlineKeyboard(chatId,
+      "🚫 You must enter a premium code to use Gemini.",
+      [[{ text: "🔐 Enter Premium Code", callback_data: "enter_code" }]]
+    );
+    return res.status(200).send("OK");
   }
 
-  await send(chatId, "✍️ Thinking...");
+  // User authorized, process Gemini API call
+  await sendChatAction(chatId, "typing");
 
   try {
-    const gemini = await fetch("https://gemini-bot-paidtech.vercel.app/api/chat", {
+    const geminiResponse = await fetch("https://gemini-bot-paidtech.vercel.app/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        messages: [{ role: "user", content: text }]
-      })
+      body: JSON.stringify({ messages: [{ role: "user", content: text }] })
     });
 
-    const result = await gemini.json();
-    const reply = result.text || "⚠️ No response from Gemini.";
-
-    return send(chatId, reply);
-  } catch (err) {
-    console.error("Gemini fetch error:", err);
-    return send(chatId, "🚫 Gemini API failed to respond.");
+    const data = await geminiResponse.json();
+    const reply = data.text || "⚠️ No response from Gemini.";
+    await sendMessage(chatId, reply);
+  } catch (error) {
+    console.error("Gemini API error:", error);
+    await sendMessage(chatId, "🚫 Gemini API failed to respond.");
   }
+
+  res.status(200).send("OK");
 }
 
-async function send(chatId, text, parse_mode = null) {
+// Send message helper
+async function sendMessage(chatId, text, parse_mode = null) {
   return fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       chat_id: chatId,
       text,
-      ...(parse_mode && { parse_mode })
+      ...(parse_mode ? { parse_mode } : {})
     })
   });
 }
 
-async function sendInline(chatId, text, buttons) {
+// Send message with inline keyboard helper
+async function sendInlineKeyboard(chatId, text, inline_keyboard) {
   return fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -101,7 +122,28 @@ async function sendInline(chatId, text, buttons) {
       chat_id: chatId,
       text,
       parse_mode: "Markdown",
-      reply_markup: { inline_keyboard: buttons }
+      reply_markup: { inline_keyboard }
     })
   });
-              }
+}
+
+// Send typing action helper
+async function sendChatAction(chatId, action) {
+  return fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendChatAction`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      chat_id: chatId,
+      action
+    })
+  });
+}
+
+// Answer callback query to remove loading spinner
+async function answerCallbackQuery(callbackQueryId) {
+  return fetch(`https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ callback_query_id: callbackQueryId })
+  });
+}
