@@ -1,7 +1,7 @@
-// /api/bot.js - Telegram Gemini Bot with auto reaction
+// /api/bot.js - Telegram Gemini Bot with auto reaction and proper message handling
 import fetch from "node-fetch";
 
-const ADMIN_ID = process.env.ADMIN_ID; // Your Telegram user ID
+const ADMIN_ID = process.env.ADMIN_ID;
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 
 let promoCodes = {};  // { code: { expires: timestamp } }
