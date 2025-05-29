@@ -24,7 +24,7 @@ app.post("/api/bot", async (req, res) => {
       return res.status(200).send("ok");
     }
 
-    // Call Gemini API (OpenAI chat completions compatible)
+    // Call Gemini API
     const geminiResponse = await fetch(process.env.GEMINI_API_URL, {
       method: "POST",
       headers: {
@@ -32,7 +32,7 @@ app.post("/api/bot", async (req, res) => {
         "Authorization": `Bearer ${process.env.GEMINI_API_KEY}`,
       },
       body: JSON.stringify({
-        model: "gemini-1", // Adjust model name if needed
+        model: "gemini-1", // adjust your model if needed
         messages: [
           { role: "user", content: userText }
         ],
@@ -40,20 +40,20 @@ app.post("/api/bot", async (req, res) => {
     });
 
     if (!geminiResponse.ok) {
-      console.error("Gemini API error:", await geminiResponse.text());
-      await sendTelegramMessage(chat_id, "Sorry, Gemini API error.");
+      const errorText = await geminiResponse.text();
+      console.error("Gemini API error:", errorText);
+      await sendTelegramMessage(chat_id, "Gemini API error:\n" + errorText);
       return res.status(200).send("gemini error");
     }
 
     const geminiData = await geminiResponse.json();
     const botReply = geminiData.choices?.[0]?.message?.content || "No reply from Gemini";
 
-    // Send Gemini reply back to Telegram
     await sendTelegramMessage(chat_id, botReply);
 
   } catch (err) {
-    console.error("Error:", err);
-    await sendTelegramMessage(chat_id, "Oops, something went wrong.");
+    console.error("Fetch or other error:", err);
+    await sendTelegramMessage(chat_id, `Oops, something went wrong:\n${err.message || err}`);
   }
 
   res.status(200).send("ok");
